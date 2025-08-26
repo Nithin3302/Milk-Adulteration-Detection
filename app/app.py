@@ -1,0 +1,396 @@
+import streamlit as st
+import os
+import time
+import cv2
+import joblib
+import numpy as np
+from streamlit_autorefresh import st_autorefresh
+from datetime import datetime
+
+# Make the app use the full browser width and reduce default padding to fit Windows screen
+st.set_page_config(page_title="Milk Classifier", page_icon="🔬", layout="wide", initial_sidebar_state="collapsed")
+
+st.markdown(
+    """
+    <style>
+      /* overall theme: black background, green highlights */
+      html, body, #root, .appview-container, .main, .reportview-container .main .block-container {
+          background: #000000 !important;
+          color: #9aff7a !important; /* soft green text */
+          height: 100vh !important;
+          overflow: hidden;
+      }
+
+      /* reduce Streamlit page padding */
+      .reportview-container .main .block-container{
+          padding-top:6px;
+          padding-right:8px;
+          padding-left:8px;
+      }
+
+      /* make columns container fill remaining height so inner pieces can scroll independently */
+      div[data-testid="stColumns"] {
+          height: calc(100vh - 56px);
+      }
+
+      /* make all Streamlit images display at ~25% of their container (1/4 size) */
+      div[data-testid="stImage"] img {
+          max-width: 25% !important;
+          height: auto !important;
+          object-fit: contain !important;
+          display: block;
+          margin-left: auto;
+          margin-right: auto;
+      }
+
+      /* ensure large images don't exceed available height */
+      div[data-testid="stImage"] img {
+          max-height: calc(100vh - 140px) !important;
+      }
+
+      /* scrollable history area within the page (prevents whole-page scroll) */
+      .history-scroll {
+          max-height: calc(100vh - 140px);
+          overflow: auto;
+          padding-right: 6px;
+      }
+
+      /* small style for the fullscreen button */
+      .fullscreen-btn {
+          position: fixed;
+          top: 10px;
+          right: 10px;
+          z-index: 9999;
+          padding: 8px 12px;
+          border-radius: 6px;
+          background: #0e1117;
+          color: #9aff7a;
+          border: 1px solid #0f9d58;
+          cursor: pointer;
+          font-weight: 600;
+      }
+
+      /* Sidebar styling */
+      .css-1d391kg { background-color: #04110a !important; } /* container bg (may vary by streamlit version) */
+      .css-1y0tads { color: #9aff7a !important; } /* headings color */
+
+      /* make markdown text use green tint */
+      .stMarkdown, .stText, .stInfo {
+          color: #9aff7a !important;
+      }
+
+      /* Center prediction badge */
+      .prediction-center {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          margin: 20px 0;
+      }
+    </style>
+
+    <!-- Fullscreen toggle: requests browser fullscreen. Users can also press F11 -->
+    <button class="fullscreen-btn" onclick="(function(){
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen && document.documentElement.requestFullscreen();
+        } else {
+            document.exitFullscreen && document.exitFullscreen();
+        }
+    })()">Enter / Exit Fullscreen</button>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Paths
+CAPTURE_FOLDER = "data/raw/real/CAPTURE_FOLDER"
+
+# Load model (cached so reruns are cheap)
+@st.cache_resource
+def load_model(path):
+    return joblib.load(path)
+
+model = load_model("models/milk_classifier.pkl")
+labels = {0: 'Adulterated', 1: 'Glucose', 2: 'Pathogens', 3: 'Pure'}
+
+def preprocess_image(image_path):
+    img = cv2.imread(image_path)
+    img = cv2.resize(img, (128, 128))
+    img = img / 255.0
+    return img.flatten().reshape(1, -1)
+
+def predict(image_path):
+    features = preprocess_image(image_path)
+    try:
+        probs = model.predict_proba(features)[0]
+        pred_idx = int(model.predict(features)[0])
+        confidence = float(probs[pred_idx])
+    except Exception:
+        # model has no predict_proba or failed -> fallback to 1.0
+        pred_idx = int(model.predict(features)[0])
+        confidence = 1.0
+    label = labels[pred_idx]
+    return label, confidence
+
+# helper: colored badge for predictions (keep existing colors)
+def render_prediction_badge(text, center=True):
+    colors = {
+        "Adulterated": "#ff4b4b",  # red
+        "Pure": "#00e676",         # green
+        "Pathogens": "#9c27b0",    # purple
+        "Glucose": "#ffffff"       # white
+    }
+    bg = colors.get(text, "#666666")
+    txt_color = "#000000" if bg == "#ffffff" else "#ffffff"
+    badge_html = f"""
+    <div style="
+        display:inline-block;
+        padding:10px 16px;
+        border-radius:10px;
+        background:{bg};
+        color:{txt_color};
+        font-weight:700;
+        font-size:18px;
+        text-align:center;
+        min-width:160px;
+    ">{text}</div>
+    """
+    if center:
+        html = f'<div class="prediction-center">{badge_html}</div>'
+    else:
+        html = badge_html
+    st.markdown(html, unsafe_allow_html=True)
+
+# sidebar debug panel (separate node)
+with st.sidebar.expander("Debug / Diagnostics", expanded=True):
+    # smaller font for cleaner compact display
+    st.markdown('<div style="font-size:12px">', unsafe_allow_html=True)
+    st.write("Last checked:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    st.write("CAPTURE_FOLDER:", CAPTURE_FOLDER)
+    try:
+        dbg_files = sorted(
+            [f for f in os.listdir(CAPTURE_FOLDER) if os.path.isfile(os.path.join(CAPTURE_FOLDER, f))],
+            key=lambda x: os.path.getmtime(os.path.join(CAPTURE_FOLDER, x)), reverse=True
+        )
+        st.write("files (newest→oldest):")
+        for f in dbg_files[:10]:
+            st.markdown(f"- {f}", unsafe_allow_html=True)
+    except Exception as e:
+        st.write("ERR listing files:", e)
+    st.write("session_state.last_file:", st.session_state.get("last_file"))
+    st.write("history length:", len(st.session_state.get("history", [])))
+    if st.button("Force refresh"):
+        # quick way to force rerun from sidebar
+        if hasattr(st, "experimental_rerun"):
+            st.experimental_rerun()
+        else:
+            st.experimental_set_query_params(_refresh=str(time.time()))
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+with st.sidebar.expander("Manage Captures", expanded=False):
+    st.markdown('<div style="font-size:12px">', unsafe_allow_html=True)
+    st.write("Safe Delete")
+    # Prepare-delete preview (existing behavior)
+    if st.button("Prepare delete", key="prepare_delete"):
+        try:
+            names = sorted(os.listdir(CAPTURE_FOLDER))
+            deletables = []
+            for name in names:
+                path = os.path.join(CAPTURE_FOLDER, name)
+                # skip directories (including 'thumbnail') to be safe
+                if os.path.isdir(path):
+                    continue
+                # only include common image types
+                if name.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.gif')):
+                    deletables.append(name)
+            st.session_state._delete_preview = deletables
+        except Exception as e:
+            st.error(f"Error preparing delete: {e}")
+            st.session_state._delete_preview = []
+
+    if st.session_state.get("_delete_preview"):
+        preview = st.session_state["_delete_preview"]
+        st.write(f"Files to delete ({len(preview)}):")
+        # truncated listing
+        for fn in preview[:50]:
+            st.markdown(f"- {fn}", unsafe_allow_html=True)
+        if len(preview) > 50:
+            st.write("... (truncated)")
+        if st.button("Confirm delete", key="confirm_delete"):
+            deleted = 0
+            errors = []
+            for name in preview:
+                p = os.path.join(CAPTURE_FOLDER, name)
+                try:
+                    os.remove(p)
+                    deleted += 1
+                except Exception as e:
+                    errors.append((name, str(e)))
+            st.success(f"Deleted {deleted} files.")
+            if errors:
+                st.error(f"Errors deleting {len(errors)} files.")
+                for n, err in errors[:10]:
+                    st.write(f"- {n}: {err}")
+            # clear preview and reset session markers
+            st.session_state._delete_preview = []
+            st.session_state.last_file = None
+            if hasattr(st, "experimental_rerun"):
+                st.experimental_rerun()
+            else:
+                st.experimental_set_query_params(_refresh=str(time.time()))
+
+    st.markdown("---")
+    # Immediate delete-all action (skips directories)
+    st.write("Force Delete")
+    if st.button("Delete all images", key="delete_all_images"):
+        deleted = 0
+        errors = []
+        try:
+            for name in os.listdir(CAPTURE_FOLDER):
+                p = os.path.join(CAPTURE_FOLDER, name)
+                if os.path.isdir(p):
+                    continue
+                if name.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.gif')):
+                    try:
+                        os.remove(p)
+                        deleted += 1
+                    except Exception as e:
+                        errors.append((name, str(e)))
+            st.success(f"Deleted {deleted} files.")
+            if errors:
+                st.error(f"Errors deleting {len(errors)} files.")
+        except Exception as e:
+            st.error(f"Failed to delete files: {e}")
+        # reset state and refresh UI
+        st.session_state.last_file = None
+        st.session_state.history = []
+        if hasattr(st, "experimental_rerun"):
+            st.experimental_rerun()
+        else:
+            st.experimental_set_query_params(_refresh=str(time.time))
+    st.markdown('</div>', unsafe_allow_html=True)
+#
+st.title("🔬 Real-time Milk Sample Classification")
+st.write("Waiting for new captures in CAPTURE_FOLDER...")
+
+# Auto-refresh in browser every 2000 ms (2s)
+st_autorefresh(interval=2000, key="autorefresh")
+
+# Initialize persistent UI state
+if "last_file" not in st.session_state:
+    st.session_state.last_file = None
+if "history" not in st.session_state:
+    # history: list of dicts {file, timestamp, prediction}
+    st.session_state.history = []
+
+# Safe listing of files (recomputed each rerun)
+try:
+    all_files = sorted(
+        [f for f in os.listdir(CAPTURE_FOLDER) if os.path.isfile(os.path.join(CAPTURE_FOLDER, f))],
+        key=lambda x: os.path.getmtime(os.path.join(CAPTURE_FOLDER, x)), reverse=True
+    )
+except Exception:
+    st.error(f"Cannot access capture folder: {CAPTURE_FOLDER}")
+    st.stop()
+
+# Determine which new files to process (those newer than last_file)
+to_process = []
+if all_files:
+    # If first run, only process the latest file (avoid backlog)
+    if st.session_state.last_file is None:
+        to_process = [all_files[0]]
+    else:
+        # collect files until we reach last_file (all_files sorted newest->oldest)
+        for fname in all_files:
+            full = os.path.join(CAPTURE_FOLDER, fname)
+            if full == st.session_state.last_file:
+                break
+            to_process.append(fname)
+    # process in chronological order (oldest first)
+    to_process = list(reversed(to_process))
+
+# Helper to check file stability (small wait to avoid reading partial writes)
+def is_stable(path, wait=0.2):
+    try:
+        s1 = os.path.getsize(path)
+        time.sleep(wait)
+        s2 = os.path.getsize(path)
+        return s1 == s2 and s1 > 0
+    except Exception:
+        return False
+
+# Process new files
+for fname in to_process:
+    fullpath = os.path.join(CAPTURE_FOLDER, fname)
+    if not is_stable(fullpath):
+        # skip unstable file; it'll be picked up on next refresh
+        continue
+    try:
+        pred_label, pred_conf = predict(fullpath)
+    except Exception as e:
+        pred_label, pred_conf = f"ERROR: {e}", 0.0
+    st.session_state.history.append({
+        "file": fullpath,
+        "time": datetime.fromtimestamp(os.path.getmtime(fullpath)).strftime("%Y-%m-%d %H:%M:%S"),
+        "prediction": pred_label,
+        "confidence": pred_conf
+    })
+    st.session_state.last_file = fullpath
+
+# If there are files but none processed (e.g., only unstable), ensure last_file points to latest to avoid backlog
+if all_files and not to_process and st.session_state.last_file is None:
+    st.session_state.last_file = os.path.join(CAPTURE_FOLDER, all_files[0])
+
+# UI: show latest image and history
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    if st.session_state.history:
+        latest = st.session_state.history[-1]
+        st.subheader("Latest Capture")
+        st.image(latest["file"], caption=f"{os.path.basename(latest['file'])} — {latest['time']}", use_container_width=False)
+        
+        # Show centered prediction badge
+        render_prediction_badge(latest["prediction"], center=True)
+    else:
+        st.info("No captures classified yet.")
+
+with col2:
+    st.subheader("History")
+    show_history_conf = st.checkbox("Show confidence in history", value=False)
+    # ... rest of history display code ...
+    with st.expander("Show history", expanded=False):
+        if st.session_state.history:
+            st.markdown('<div class="history-scroll">', unsafe_allow_html=True)
+            for item in reversed(st.session_state.history):
+                row = st.container()
+                with row:
+                    c1, c2 = st.columns([1, 3])
+                    with c1:
+                        try:
+                            st.image(item["file"], width=120)
+                        except Exception:
+                            st.write("")
+                    with c2:
+                        st.markdown(f"**{os.path.basename(item['file'])}**")
+                        st.write(item["time"])
+                        render_prediction_badge(item["prediction"], center=False)
+                        if show_history_conf and "confidence" in item:
+                            conf_pct = int(item["confidence"] * 100)
+                            st.write(f"Confidence: {conf_pct}%")
+                            st.progress(item["confidence"])
+                        st.markdown("---")
+            st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.write("No history entries.")
+
+# Add new sidebar expander for confidence (place after Debug and Manage Captures expanders)
+with st.sidebar.expander("Prediction Confidence", expanded=False):
+    st.markdown('<div style="font-size:12px">', unsafe_allow_html=True)
+    show_conf = st.checkbox("Show confidence values", value=False)
+    if st.session_state.history and show_conf:
+        latest = st.session_state.history[-1]
+        if "confidence" in latest:
+            conf_pct = int(latest["confidence"] * 100)
+            st.write(f"Latest prediction confidence: {conf_pct}%")
+            st.progress(latest["confidence"])
+    st.markdown('</div>', unsafe_allow_html=True)
