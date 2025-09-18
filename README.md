@@ -13,8 +13,6 @@ A Streamlit-based web app that classifies microscope images of milk samples in r
   - Pathogen presence
 - Shows prediction confidence (optional)
 - Tracks and displays classification history
-- Dark-themed UI optimized for laboratory environments
-- Export results as CSV
 
 ## 🧠 Model
 
