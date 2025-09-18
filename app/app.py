@@ -13,10 +13,10 @@ st.set_page_config(page_title="Milk Classifier", page_icon="🔬", layout="wide"
 st.markdown(
     """
     <style>
-      /* overall theme: black background, green highlights */
+      /* overall theme: black background, cyan highlights */
       html, body, #root, .appview-container, .main, .reportview-container .main .block-container {
           background: #000000 !important;
-          color: #9aff7a !important; /* soft green text */
+          color: #00ffff !important; /* cyan text */
           height: 100vh !important;
           overflow: hidden;
       }
@@ -64,19 +64,19 @@ st.markdown(
           padding: 8px 12px;
           border-radius: 6px;
           background: #0e1117;
-          color: #9aff7a;
-          border: 1px solid #0f9d58;
+          color: #00ffff;
+          border: 1px solid #00cccc;
           cursor: pointer;
           font-weight: 600;
       }
 
       /* Sidebar styling */
-      .css-1d391kg { background-color: #04110a !important; } /* container bg (may vary by streamlit version) */
-      .css-1y0tads { color: #9aff7a !important; } /* headings color */
+      .css-1d391kg { background-color: #041111 !important; } /* darker cyan tint */
+      .css-1y0tads { color: #00ffff !important; } /* cyan headings */
 
-      /* make markdown text use green tint */
+      /* make markdown text use cyan tint */
       .stMarkdown, .stText, .stInfo {
-          color: #9aff7a !important;
+          color: #00ffff !important;
       }
 
       /* Center prediction badge */
@@ -272,6 +272,45 @@ with st.sidebar.expander("Manage Captures", expanded=False):
 st.title("🔬 Real-time Milk Sample Classification")
 st.write("Waiting for new captures in CAPTURE_FOLDER...")
 
+# Add file upload section - now directly visible
+st.markdown("### 📤 Upload Image for Classification")
+uploaded_file = st.file_uploader("Choose an image file", type=['jpg', 'jpeg', 'png', 'bmp'])
+if uploaded_file is not None:
+    # Create a temporary file to process
+    temp_path = f"temp_{uploaded_file.name}"
+    try:
+        # Save uploaded file temporarily
+        with open(temp_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        
+        # Classify the uploaded image
+        pred_label, pred_conf = predict(temp_path)
+        
+        # Display results
+        st.image(temp_path, caption="Uploaded Image", use_container_width=False)
+        render_prediction_badge(pred_label, center=True)
+        
+        # Show confidence if enabled
+        if show_conf:
+            conf_pct = int(pred_conf * 100)
+            st.write(f"Confidence: {conf_pct}%")
+            st.progress(pred_conf)
+        
+        # Add to history
+        st.session_state.history.append({
+            "file": temp_path,
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "prediction": pred_label,
+            "confidence": pred_conf
+        })
+        
+    except Exception as e:
+        st.error(f"Error processing image: {e}")
+    finally:
+        # Clean up temporary file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
 # Auto-refresh in browser every 2000 ms (2s)
 st_autorefresh(interval=2000, key="autorefresh")
 
@@ -351,39 +390,157 @@ with col1:
         
         # Show centered prediction badge
         render_prediction_badge(latest["prediction"], center=True)
+        
+        # Show confidence below prediction
+        if "confidence" in latest:
+            conf_pct = int(latest["confidence"] * 100)
+            st.markdown(
+                f"""<div style="text-align: center; color: #00ffff;">
+                    Confidence: {conf_pct}%
+                </div>""", 
+                unsafe_allow_html=True
+            )
+            # Centered progress bar with custom width
+            col_left, col_middle, col_right = st.columns([1, 2, 1])
+            with col_middle:
+                st.progress(latest["confidence"])
     else:
         st.info("No captures classified yet.")
 
 with col2:
-    st.subheader("History")
-    show_history_conf = st.checkbox("Show confidence in history", value=False)
-    # ... rest of history display code ...
-    with st.expander("Show history", expanded=False):
+    st.markdown("### 📊 Analysis Dashboard")
+    
+    # Statistics card
+    with st.container():
+        st.markdown("""
+        <div style="
+            background-color: rgba(0,255,255,0.1);
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #00ffff;
+        ">
+        """, unsafe_allow_html=True)
+        
         if st.session_state.history:
-            st.markdown('<div class="history-scroll">', unsafe_allow_html=True)
-            for item in reversed(st.session_state.history):
-                row = st.container()
-                with row:
-                    c1, c2 = st.columns([1, 3])
-                    with c1:
-                        try:
-                            st.image(item["file"], width=120)
-                        except Exception:
-                            st.write("")
-                    with c2:
-                        st.markdown(f"**{os.path.basename(item['file'])}**")
-                        st.write(item["time"])
-                        render_prediction_badge(item["prediction"], center=False)
-                        if show_history_conf and "confidence" in item:
-                            conf_pct = int(item["confidence"] * 100)
-                            st.write(f"Confidence: {conf_pct}%")
-                            st.progress(item["confidence"])
-                        st.markdown("---")
-            st.markdown('</div>', unsafe_allow_html=True)
+            # Today's statistics
+            today = datetime.now().date()
+            today_samples = sum(1 for x in st.session_state.history 
+                              if datetime.strptime(x['time'], "%Y-%m-%d %H:%M:%S").date() == today)
+            
+            # Category counts
+            total = len(st.session_state.history)
+            pure_count = sum(1 for x in st.session_state.history if x['prediction'] == 'Pure')
+            adulterated_count = sum(1 for x in st.session_state.history if x['prediction'] == 'Adulterated')
+            glucose_count = sum(1 for x in st.session_state.history if x['prediction'] == 'Glucose')
+            pathogen_count = sum(1 for x in st.session_state.history if x['prediction'] == 'Pathogens')
+            
+            # Display stats
+            st.markdown("#### Today's Analysis")
+            st.markdown(f"📊 Samples analyzed today: **{today_samples}**")
+            st.markdown("#### Overall Statistics")
+            st.markdown(f"🔍 Total samples: **{total}**")
+            
+            # Category breakdown with colored indicators
+            st.markdown("""
+            <style>
+            .stat-row {
+                display: flex;
+                justify-content: space-between;
+                margin: 5px 0;
+                padding: 5px;
+                border-radius: 5px;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            
+            def make_stat_row(label, count, color):
+                percentage = (count/total)*100 if total > 0 else 0
+                return f"""
+                <div class="stat-row" style="background-color: {color}22;">
+                    <span>{label}:</span>
+                    <span><b>{count}</b> ({percentage:.1f}%)</span>
+                </div>
+                """
+            
+            stats_html = f"""
+            {make_stat_row("Pure", pure_count, "#00e676")}
+            {make_stat_row("Adulterated", adulterated_count, "#ff4b4b")}
+            {make_stat_row("Glucose", glucose_count, "#ffffff")}
+            {make_stat_row("Pathogens", pathogen_count, "#9c27b0")}
+            """
+            st.markdown(stats_html, unsafe_allow_html=True)
+            
+            # Recent detections timeline
+            st.markdown("#### Recent Timeline")
+            recent = list(reversed(st.session_state.history[-5:]))  # last 5 entries
+            for item in recent:
+                st.markdown(f"""
+                <div style="
+                    padding: 5px;
+                    margin: 5px 0;
+                    font-size: 0.9em;
+                    border-left: 3px solid #00ffff;
+                    padding-left: 10px;
+                ">
+                    <div>{item['time']}</div>
+                    <div><b>{item['prediction']}</b></div>
+                </div>
+                """, unsafe_allow_html=True)
         else:
-            st.write("No history entries.")
+            st.markdown("No data available yet")
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+    # Optional: Add export buttons
+    st.markdown("### 📥 Export Data")
+    if st.session_state.history:
+        if st.button("Export to CSV"):
+            # Prepare CSV data
+            import io
+            import csv
+            
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow(['Timestamp', 'Prediction', 'Confidence', 'Filename'])
+            
+            for item in st.session_state.history:
+                writer.writerow([
+                    item['time'],
+                    item['prediction'],
+                    f"{int(item.get('confidence', 0)*100)}%",
+                    os.path.basename(item['file'])
+                ])
+            
+            st.download_button(
+                label="Download CSV",
+                data=output.getvalue(),
+                file_name=f"milk_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime='text/csv'
+            )
 
-# Add new sidebar expander for confidence (place after Debug and Manage Captures expanders)
+# Remove the history from col2 and add to sidebar (place after other sidebar expanders)
+with st.sidebar.expander("History", expanded=False):
+    st.markdown('<div style="font-size:12px">', unsafe_allow_html=True)
+    if st.session_state.history:
+        st.markdown('<div class="history-scroll">', unsafe_allow_html=True)
+        for item in reversed(st.session_state.history):
+            with st.container():
+                try:
+                    st.image(item["file"], width=100)
+                except Exception:
+                    st.write("")
+                st.markdown(f"**{os.path.basename(item['file'])}**")
+                st.write(item["time"])
+                render_prediction_badge(item["prediction"], center=False)
+                if "confidence" in item:
+                    conf_pct = int(item["confidence"] * 100)
+                    st.progress(item["confidence"])
+                st.markdown("---")
+        st.markdown('</div>', unsafe_allow_html=True)
+    else:
+        st.write("No history entries.")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# Add new sidebar expander for confidence (place after other sidebar expanders)
 with st.sidebar.expander("Prediction Confidence", expanded=False):
     st.markdown('<div style="font-size:12px">', unsafe_allow_html=True)
     show_conf = st.checkbox("Show confidence values", value=False)
