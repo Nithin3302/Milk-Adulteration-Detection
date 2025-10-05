@@ -4,6 +4,7 @@ import time
 import cv2
 import joblib
 import numpy as np
+import tensorflow as tf
 from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
 
@@ -86,6 +87,52 @@ st.markdown(
           align-items: center;
           margin: 20px 0;
       }
+
+      /* Custom positioning for upload section */
+      .upload-prediction-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        width: 100%;
+        margin: 20px auto;
+        position: relative;
+        right: 150px;  /* Move left by changing this value */
+    }
+    
+    .upload-image-container {
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        margin-bottom: 10px;
+    }
+    
+    .upload-image-container img {
+        max-width: 25% !important;
+        height: auto !important;
+    }
+    
+    /* Prediction badge styling for upload section */
+    .prediction-badge-upload {
+        display: inline-block;
+        padding: 10px 16px;
+        border-radius: 10px;
+        font-weight: 700;
+        font-size: 18px;
+        text-align: center;
+        min-width: 160px;
+        margin-top: 10px;
+        position: relative;
+        left: 335px;  /* Move prediction badge left */
+    }
+
+    /* Confidence section styling for upload */
+    .confidence-container {
+        width: 100%;
+        max-width: 300px;    /* Control width of confidence section */
+        margin: 10px auto;   /* Center and add spacing */
+        text-align: center;
+    }
     </style>
 
     <!-- Fullscreen toggle: requests browser fullscreen. Users can also press F11 -->
@@ -105,28 +152,29 @@ CAPTURE_FOLDER = "data/raw/real/CAPTURE_FOLDER"
 
 # Load model (cached so reruns are cheap)
 @st.cache_resource
-def load_model(path):
-    return joblib.load(path)
+def load_model():
+    """Load the trained CNN model"""
+    model_path = os.path.join('models', 'milk_classifier_cnn.keras')
+    return tf.keras.models.load_model(model_path)
 
-model = load_model("models/milk_classifier.pkl")
-labels = {0: 'Adulterated', 1: 'Glucose', 2: 'Pathogens', 3: 'Pure'}
+# Update model loading
+model = load_model()
+labels = {0: 'Pure', 1: 'Glucose', 2: 'Adulterated', 3: 'Pathogens'}
 
 def preprocess_image(image_path):
+    """Preprocess image for CNN prediction"""
     img = cv2.imread(image_path)
     img = cv2.resize(img, (128, 128))
-    img = img / 255.0
-    return img.flatten().reshape(1, -1)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # Convert to RGB
+    img = img.astype('float32') / 255.0  # Normalize
+    return np.expand_dims(img, axis=0)
 
 def predict(image_path):
+    """Predict using CNN model"""
     features = preprocess_image(image_path)
-    try:
-        probs = model.predict_proba(features)[0]
-        pred_idx = int(model.predict(features)[0])
-        confidence = float(probs[pred_idx])
-    except Exception:
-        # model has no predict_proba or failed -> fallback to 1.0
-        pred_idx = int(model.predict(features)[0])
-        confidence = 1.0
+    predictions = model.predict(features)
+    pred_idx = np.argmax(predictions[0])
+    confidence = float(predictions[0][pred_idx])
     label = labels[pred_idx]
     return label, confidence
 
@@ -266,50 +314,75 @@ with st.sidebar.expander("Manage Captures", expanded=False):
         if hasattr(st, "experimental_rerun"):
             st.experimental_rerun()
         else:
-            st.experimental_set_query_params(_refresh=str(time.time))
+            st.experimental_set_query_params(_refresh=str(time))
     st.markdown('</div>', unsafe_allow_html=True)
 #
 st.title("🔬 Real-time Milk Sample Classification")
 st.write("Waiting for new captures in CAPTURE_FOLDER...")
 
-# Add file upload section - now directly visible
+# Add show_conf definition here
+show_conf = st.sidebar.checkbox("Show confidence values", value=False, key="show_conf_main")
+
+# Update the file upload section with simpler code
 st.markdown("### 📤 Upload Image for Classification")
 uploaded_file = st.file_uploader("Choose an image file", type=['jpg', 'jpeg', 'png', 'bmp'])
+
+# Update the prediction section in the upload handler
 if uploaded_file is not None:
-    # Create a temporary file to process
-    temp_path = f"temp_{uploaded_file.name}"
     try:
-        # Save uploaded file temporarily
-        with open(temp_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
+        # Read file directly from memory
+        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+        image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
         
-        # Classify the uploaded image
-        pred_label, pred_conf = predict(temp_path)
+        # Preprocessing (without debug prints)
+        img = cv2.resize(image, (128, 128))
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = img.astype('float32') / 255.0
+        img = np.expand_dims(img, axis=0)
         
-        # Display results
-        st.image(temp_path, caption="Uploaded Image", use_container_width=False)
-        render_prediction_badge(pred_label, center=True)
+        # Make prediction
+        predictions = model.predict(img, verbose=0)
+        pred_idx = np.argmax(predictions[0])
+        confidence = float(predictions[0][pred_idx])
+        pred_label = labels[pred_idx]
+        
+        # Updated display section with better styling
+        st.markdown('<div class="upload-prediction-container">', unsafe_allow_html=True)
+        
+        # Image container
+        st.markdown('<div class="upload-image-container">', unsafe_allow_html=True)
+        st.image(image, use_container_width=False)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Custom prediction badge
+        colors = {
+            "Adulterated": "#ff4b4b",
+            "Pure": "#00e676",
+            "Pathogens": "#9c27b0",
+            "Glucose": "#ffffff"
+        }
+        bg = colors.get(pred_label, "#666666")
+        txt_color = "#000000" if bg == "#ffffff" else "#ffffff"
+        
+        st.markdown(
+            f"""<div class="prediction-badge-upload" style="background:{bg};color:{txt_color};">
+                {pred_label}
+            </div>""", 
+            unsafe_allow_html=True
+        )
         
         # Show confidence if enabled
         if show_conf:
-            conf_pct = int(pred_conf * 100)
-            st.write(f"Confidence: {conf_pct}%")
-            st.progress(pred_conf)
-        
-        # Add to history
-        st.session_state.history.append({
-            "file": temp_path,
-            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "prediction": pred_label,
-            "confidence": pred_conf
-        })
-        
+            st.markdown('<div class="confidence-container">', unsafe_allow_html=True)
+            conf_pct = int(confidence * 100)
+            st.markdown(f'Confidence: {conf_pct}%', unsafe_allow_html=True)
+            st.progress(confidence)
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+        st.markdown('</div>', unsafe_allow_html=True)
+            
     except Exception as e:
         st.error(f"Error processing image: {e}")
-    finally:
-        # Clean up temporary file
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
 
 # Auto-refresh in browser every 2000 ms (2s)
 st_autorefresh(interval=2000, key="autorefresh")
@@ -540,10 +613,9 @@ with st.sidebar.expander("History", expanded=False):
         st.write("No history entries.")
     st.markdown('</div>', unsafe_allow_html=True)
 
-# Add new sidebar expander for confidence (place after other sidebar expanders)
+# Remove the duplicate show_conf checkbox from the sidebar expander (around line 450)
 with st.sidebar.expander("Prediction Confidence", expanded=False):
     st.markdown('<div style="font-size:12px">', unsafe_allow_html=True)
-    show_conf = st.checkbox("Show confidence values", value=False)
     if st.session_state.history and show_conf:
         latest = st.session_state.history[-1]
         if "confidence" in latest:
@@ -551,3 +623,31 @@ with st.sidebar.expander("Prediction Confidence", expanded=False):
             st.write(f"Latest prediction confidence: {conf_pct}%")
             st.progress(latest["confidence"])
     st.markdown('</div>', unsafe_allow_html=True)
+
+# Add after the existing statistics in the Analysis Dashboard section
+# Around line 530, inside the statistics card container
+
+# ...existing statistics code...
+
+# Add model accuracy section
+st.markdown("#### Model Performance")
+st.markdown("""
+<div class="stat-row" style="background-color: #00ffff22;">
+    <span>Model Accuracy:</span>
+    <span><b>86.81%</b></span>
+</div>
+""", unsafe_allow_html=True)
+
+# Add more details if show_conf is enabled
+if show_conf:
+    st.markdown("""
+    <div style="font-size: 0.9em; margin-top: 5px;">
+        <ul style="margin-left: 20px; color: #00ffff;">
+            <li>Training Accuracy: 99.13%</li>
+            <li>Validation Accuracy: 86.81%</li>
+            <li>Total Parameters: 17.1M</li>
+        </ul>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ...continue with existing code...
