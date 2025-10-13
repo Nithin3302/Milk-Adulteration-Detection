@@ -1,12 +1,17 @@
 import streamlit as st
 import os
 import time
-import cv2
-import joblib
 import numpy as np
 import tensorflow as tf
 from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
+
+# Wrap problematic imports in try-except
+try:
+    import cv2
+except ImportError:
+    st.error("Error: OpenCV import failed. Please check system dependencies.")
+    st.stop()
 
 # Make the app use the full browser width and reduce default padding to fit Windows screen
 st.set_page_config(page_title="Milk Classifier", page_icon="🔬", layout="wide", initial_sidebar_state="collapsed")
