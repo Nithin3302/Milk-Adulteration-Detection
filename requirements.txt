@@ -1,7 +1,7 @@
-streamlit
-opencv-python
-numpy
-joblib
-scikit-learn
-streamlit-autorefresh
-watchdog
+streamlit==1.50.0
+opencv-python-headless==4.8.0.74
+numpy==1.24.3
+tensorflow==2.13.0
+Pillow==10.0.0
+streamlit-autorefresh==1.0.1
+joblib==1.3.2
