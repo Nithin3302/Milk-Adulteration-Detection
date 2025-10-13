@@ -6,12 +6,18 @@ import tensorflow as tf
 from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
 
-# Wrap problematic imports in try-except
+# More robust CV2 import with fallback
 try:
     import cv2
 except ImportError:
-    st.error("Error: OpenCV import failed. Please check system dependencies.")
-    st.stop()
+    try:
+        # Try installing opencv-python-headless if import fails
+        import subprocess
+        subprocess.check_call(["pip", "install", "opencv-python-headless==4.8.0.74"])
+        import cv2
+    except Exception as e:
+        st.error(f"Failed to import OpenCV: {e}")
+        st.stop()
 
 # Make the app use the full browser width and reduce default padding to fit Windows screen
 st.set_page_config(page_title="Milk Classifier", page_icon="🔬", layout="wide", initial_sidebar_state="collapsed")
