@@ -1,6 +1,6 @@
 streamlit==1.50.0
 opencv-python-headless==4.8.0.74
-numpy==1.26.0
+numpy==1.24.3  # Changed from 1.26.0 to ensure compatibility
 tensorflow-cpu==2.14.0
 Pillow==10.0.0
 streamlit-autorefresh==1.0.1
